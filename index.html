@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Dead Hang</title>
+
+<!-- iOS "Add to Home Screen" / standalone PWA behaviour -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Dead Hang">
+<meta name="theme-color" content="#050505">
+<meta name="format-detection" content="telephone=no">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23050505'/%3E%3Crect x='16' y='30' width='68' height='6' rx='3' fill='%23F3F1EA'/%3E%3Ccircle cx='22' cy='33' r='6' fill='%2349D9E8'/%3E%3Ccircle cx='78' cy='33' r='6' fill='%2349D9E8'/%3E%3Ctext x='50' y='78' font-family='Arial' font-weight='700' font-size='34' fill='%23F3F1EA' text-anchor='middle'%3E::%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="data:application/manifest+json,{%22name%22:%22Dead%20Hang%20Timer%22,%22short_name%22:%22Dead%20Hang%22,%22display%22:%22standalone%22,%22background_color%22:%22%23050505%22,%22theme_color%22:%22%23050505%22}">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:#050505;
+    --panel:#0e0f11;
+    --ink:#f3f1ea;
+    --ink-dim:#84888f;
+    --hairline:#1d1f22;
+    --amber:#ffb020;   /* prep */
+    --teal:#49d9e8;    /* hanging */
+    --grey:#6d7178;    /* paused */
+    --coral:#ff6b57;   /* reset / stop */
+    --accent: var(--ink-dim);
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg); color:var(--ink);
+    font-family:'Space Grotesk', system-ui, sans-serif;
+    overscroll-behavior:none;
+    -webkit-user-select:none; user-select:none;
+  }
+
+  body{
+    min-height:100dvh;
+    display:flex; flex-direction:column;
+    padding: calc(var(--safe-t) + 18px) 20px calc(var(--safe-b) + 20px);
+    transition: background-color .5s ease;
+  }
+
+  .mono{ font-family:'JetBrains Mono', ui-monospace, monospace; }
+
+  /* ---------- header ---------- */
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    flex-shrink:0;
+  }
+  .brand{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px; letter-spacing:.22em; font-weight:600;
+    color:var(--ink-dim); text-transform:uppercase;
+  }
+  .brand b{ color:var(--ink); }
+
+  .hand-toggle{
+    display:flex; background:var(--panel); border:1px solid var(--hairline);
+    border-radius:999px; padding:3px; gap:2px;
+  }
+  .hand-toggle button{
+    appearance:none; border:none; background:transparent; color:var(--ink-dim);
+    font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:600;
+    letter-spacing:.06em; padding:7px 12px; border-radius:999px;
+    transition:all .2s ease;
+  }
+  .hand-toggle button.active{
+    background:var(--ink); color:#050505;
+  }
+
+  /* ---------- signature rung element ---------- */
+  .rung-wrap{
+    display:flex; flex-direction:column; align-items:center;
+    margin-top:clamp(18px, 5vh, 46px);
+  }
+  .rung{
+    width:min(78vw, 360px); height:5px; border-radius:3px;
+    background:linear-gradient(90deg, #3a3d42, #cfd2d6 45%, #3a3d42);
+    position:relative; flex-shrink:0;
+    box-shadow:0 1px 0 rgba(255,255,255,.05);
+  }
+  .rung::before, .rung::after{
+    content:''; position:absolute; top:50%; width:16px; height:16px;
+    border-radius:50%; transform:translateY(-50%);
+    background:radial-gradient(circle at 35% 30%, #eef3f4, #6b7278 65%, #35383c);
+    box-shadow:0 0 0 3px var(--bg);
+  }
+  .rung::before{ left:-8px; }
+  .rung::after{ right:-8px; }
+  .strap{
+    width:2px; height:clamp(14px, 3vh, 26px);
+    background:linear-gradient(var(--hairline), transparent);
+  }
+
+  /* ---------- main stage ---------- */
+  main{
+    flex:1; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; text-align:center; gap:10px;
+    min-height:0;
+  }
+
+  .state-label{
+    font-family:'JetBrains Mono', monospace;
+    font-size:13px; font-weight:600; letter-spacing:.3em;
+    text-transform:uppercase; color:var(--accent);
+    transition:color .4s ease;
+  }
+
+  .timer{
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum";
+    font-weight:700; line-height:1;
+    font-size:clamp(64px, 22vw, 148px);
+    color:var(--ink); letter-spacing:-.02em;
+    transition:color .4s ease;
+  }
+  .timer.accent-color{ color:var(--accent); }
+
+  .sub-readout{
+    font-family:'JetBrains Mono', monospace; font-size:14px;
+    color:var(--ink-dim); letter-spacing:.05em; min-height:18px;
+  }
+
+  /* ---------- prep config (idle only) ---------- */
+  .prep-config{
+    display:flex; align-items:center; justify-content:center; gap:18px;
+    margin-top:6px;
+  }
+  .prep-config button{
+    width:48px; height:48px; border-radius:50%;
+    background:var(--panel); border:1px solid var(--hairline);
+    color:var(--ink); font-size:22px; font-weight:600;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .prep-config button:active{ background:#17191c; }
+  #prepInput{
+    width:120px; background:transparent; border:none; outline:none;
+    color:var(--ink); font-family:'Space Grotesk', sans-serif;
+    font-weight:700; font-size:44px; text-align:center;
+    font-variant-numeric:tabular-nums;
+  }
+  .prep-caption{
+    font-family:'JetBrains Mono', monospace; font-size:11px;
+    letter-spacing:.2em; color:var(--ink-dim); text-transform:uppercase;
+    margin-top:-6px;
+  }
+
+  /* ---------- controls ---------- */
+  .controls{
+    flex-shrink:0; display:flex; gap:12px; margin-top:22px;
+  }
+  .btn{
+    flex:1; border:none; border-radius:20px; padding:22px 0;
+    font-family:'JetBrains Mono', monospace; font-weight:700;
+    font-size:16px; letter-spacing:.14em; text-transform:uppercase;
+    transition:transform .12s ease, opacity .12s ease;
+  }
+  .btn:active{ transform:scale(.96); opacity:.85; }
+  .btn-start{ background:var(--teal); color:#00232a; width:100%; }
+  .btn-pause{ background:var(--ink); color:#050505; }
+  .btn-reset{ background:transparent; color:var(--coral); border:1.5px solid var(--coral); }
+
+  /* ---------- log ---------- */
+  .log{
+    flex-shrink:0; margin-top:26px; border-top:1px solid var(--hairline);
+    padding-top:14px; max-height:26vh; overflow-y:auto;
+  }
+  .log-head{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:8px;
+  }
+  .log-head span{
+    font-family:'JetBrains Mono', monospace; font-size:11px;
+    letter-spacing:.22em; color:var(--ink-dim); text-transform:uppercase;
+  }
+  .log-clear{
+    background:none; border:none; color:var(--ink-dim);
+    font-family:'JetBrains Mono', monospace; font-size:11px;
+    text-decoration:underline; padding:4px;
+  }
+  .log-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:9px 0; border-bottom:1px solid var(--hairline);
+    font-family:'JetBrains Mono', monospace; font-size:13px;
+  }
+  .log-row:last-child{ border-bottom:none; }
+  .log-hand{ color:var(--ink-dim); width:64px; text-transform:uppercase; letter-spacing:.05em; }
+  .log-dur{ color:var(--ink); font-weight:600; font-size:15px; }
+  .log-time{ color:var(--ink-dim); }
+  .log-empty{ color:var(--ink-dim); font-size:13px; padding:10px 0; font-family:'JetBrains Mono', monospace;}
+
+  /* ---------- toast ---------- */
+  .toast{
+    position:fixed; left:50%; bottom:calc(var(--safe-b) + 18px);
+    transform:translate(-50%, 14px); opacity:0; pointer-events:none;
+    background:var(--ink); color:#050505; font-family:'JetBrains Mono', monospace;
+    font-weight:600; font-size:12px; letter-spacing:.08em;
+    padding:10px 18px; border-radius:999px; transition:all .35s ease;
+    white-space:nowrap;
+  }
+  .toast.show{ opacity:1; transform:translate(-50%, 0); }
+
+  ::-webkit-scrollbar{ display:none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><b>DEAD</b> HANG</div>
+  <div class="hand-toggle" id="handToggle">
+    <button data-hand="left">L</button>
+    <button data-hand="both" class="active">Both</button>
+    <button data-hand="right">R</button>
+  </div>
+</header>
+
+<div class="rung-wrap">
+  <div class="rung"></div>
+  <div class="strap"></div>
+</div>
+
+<main>
+  <div class="state-label" id="stateLabel">Ready</div>
+  <div class="timer accent-color" id="timerDisplay">0:30</div>
+  <div class="sub-readout" id="subReadout">tap start to unlock voice cues</div>
+
+  <div class="prep-config" id="prepConfig">
+    <button id="prepMinus" aria-label="decrease prep time">–</button>
+    <div>
+      <input id="prepInput" class="mono" type="tel" inputmode="numeric" value="30" maxlength="3">
+      <div class="prep-caption">prep seconds</div>
+    </div>
+    <button id="prepPlus" aria-label="increase prep time">+</button>
+  </div>
+</main>
+
+<div class="controls" id="controls">
+  <button class="btn btn-start" id="startBtn">Start</button>
+</div>
+
+<div class="log">
+  <div class="log-head">
+    <span>Sets</span>
+    <button class="log-clear" id="clearLog">clear</button>
+  </div>
+  <div id="logList"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- hidden canvas/video pair used only as a Wake Lock API fallback -->
+<video id="wakeVideo" muted playsinline loop style="position:fixed; width:1px; height:1px; opacity:0; pointer-events:none;"></video>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- state ---------------- */
+  var STATE = { IDLE:'idle', PREP:'prep', HANG:'hang', PAUSED_PREP:'paused-prep', PAUSED_HANG:'paused-hang' };
+  var state = STATE.IDLE;
+  var currentHand = 'both';
+
+  var prepTotal = 30;          // configured prep seconds
+  var prepRemaining = 30;      // live countdown value
+  var prepInterval = null;
+
+  var hangStartTs = 0;         // Date.now() when current hang segment began
+  var hangElapsedBase = 0;     // ms accumulated before a pause
+  var hangInterval = null;
+  var lastAnnouncedSec = -1;
+
+  var wakeLock = null;
+
+  /* ---------------- dom refs ---------------- */
+  var $ = function(id){ return document.getElementById(id); };
+  var stateLabel = $('stateLabel');
+  var timerDisplay = $('timerDisplay');
+  var subReadout = $('subReadout');
+  var prepConfig = $('prepConfig');
+  var prepInput = $('prepInput');
+  var controls = $('controls');
+  var logList = $('logList');
+  var toastEl = $('toast');
+  var handToggle = $('handToggle');
+  var wakeVideo = $('wakeVideo');
+
+  /* ---------------- persistence ---------------- */
+  var LOG_KEY = 'deadhang_log_v1';
+  var PREP_KEY = 'deadhang_prep_v1';
+  var log = [];
+  try { log = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch(e){ log = []; }
+  try {
+    var savedPrep = parseInt(localStorage.getItem(PREP_KEY), 10);
+    if (savedPrep && savedPrep >= 3 && savedPrep <= 300) prepTotal = savedPrep;
+  } catch(e){}
+  prepInput.value = prepTotal;
+
+  function saveLog(){ try{ localStorage.setItem(LOG_KEY, JSON.stringify(log.slice(0,40))); }catch(e){} }
+  function savePrep(){ try{ localStorage.setItem(PREP_KEY, String(prepTotal)); }catch(e){} }
+
+  /* ---------------- speech ---------------- */
+  var voiceReady = false;
+  function primeVoices(){
+    if ('speechSynthesis' in window){
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = function(){ voiceReady = true; };
+    }
+  }
+  primeVoices();
+
+  // Must be invoked synchronously inside a user-gesture handler on iOS Safari
+  // to unlock speechSynthesis for later, timer-driven announcements.
+  function unlockSpeech(){
+    if (!('speechSynthesis' in window)) return;
+    try{
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0.01;
+      u.rate = 1;
+      window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
+
+  function speak(text){
+    if (!('speechSynthesis' in window)) return;
+    try{
+      window.speechSynthesis.cancel(); // keep the queue short & current
+      var u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.02;
+      u.pitch = 1;
+      u.volume = 1;
+      window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
+
+  function secondsToSpeech(sec){
+    if (sec < 60) return String(sec);
+    var m = Math.floor(sec / 60);
+    var r = sec % 60;
+    var phrase = m + ' minute' + (m > 1 ? 's' : '');
+    if (r > 0) phrase += ' ' + r;
+    return phrase;
+  }
+
+  /* ---------------- wake lock ---------------- */
+  var canvasStream = null;
+
+  function startFallbackWake(){
+    try{
+      var canvas = document.createElement('canvas');
+      canvas.width = 2; canvas.height = 2;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#000'; ctx.fillRect(0,0,2,2);
+      canvasStream = canvas.captureStream ? canvas.captureStream(1) : null;
+      if (canvasStream){
+        wakeVideo.srcObject = canvasStream;
+        var p = wakeVideo.play();
+        if (p && p.catch) p.catch(function(){});
+      }
+    }catch(e){}
+  }
+  function stopFallbackWake(){
+    try{
+      wakeVideo.pause();
+      wakeVideo.srcObject = null;
+      if (canvasStream){
+        canvasStream.getTracks().forEach(function(t){ t.stop(); });
+        canvasStream = null;
+      }
+    }catch(e){}
+  }
+
+  function requestWakeLock(){
+    if ('wakeLock' in navigator){
+      navigator.wakeLock.request('screen').then(function(sentinel){
+        wakeLock = sentinel;
+        wakeLock.addEventListener('release', function(){ wakeLock = null; });
+      }).catch(function(){
+        startFallbackWake();
+      });
+    } else {
+      startFallbackWake();
+    }
+  }
+
+  function releaseWakeLock(){
+    if (wakeLock){ wakeLock.release().catch(function(){}); wakeLock = null; }
+    stopFallbackWake();
+  }
+
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible' && state !== STATE.IDLE && !wakeLock){
+      requestWakeLock();
+    }
+  });
+
+  /* ---------------- formatting ---------------- */
+  function fmt(totalSeconds){
+    totalSeconds = Math.max(0, Math.floor(totalSeconds));
+    var m = Math.floor(totalSeconds / 60);
+    var s = totalSeconds % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  /* ---------------- UI helpers ---------------- */
+  function setAccent(color){ document.documentElement.style.setProperty('--accent', color); }
+
+  function renderIdle(){
+    state = STATE.IDLE;
+    stateLabel.textContent = 'Ready';
+    setAccent(getComputedStyle(document.documentElement).getPropertyValue('--ink-dim'));
+    timerDisplay.textContent = fmt(prepTotal);
+    subReadout.textContent = 'set prep time, then start';
+    prepConfig.style.display = 'flex';
+    controls.innerHTML = '<button class="btn btn-start" id="startBtn">Start</button>';
+    $('startBtn').addEventListener('click', onStart);
+    document.body.style.background = '#050505';
+  }
+
+  function renderRunningControls(){
+    var isPaused = (state === STATE.PAUSED_PREP || state === STATE.PAUSED_HANG);
+    controls.innerHTML =
+      '<button class="btn btn-pause" id="pauseBtn">' + (isPaused ? 'Resume' : 'Pause') + '</button>' +
+      '<button class="btn btn-reset" id="resetBtn">Reset</button>';
+    $('pauseBtn').addEventListener('click', onPauseResume);
+    $('resetBtn').addEventListener('click', onReset);
+  }
+
+  function renderLog(){
+    if (!log.length){
+      logList.innerHTML = '<div class="log-empty">No sets yet — your hangs will show up here.</div>';
+      return;
+    }
+    var rows = log.slice(0, 12).map(function(entry){
+      var d = new Date(entry.ts);
+      var hh = d.getHours() % 12 || 12;
+      var mm = (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+      var ampm = d.getHours() >= 12 ? 'pm' : 'am';
+      return '<div class="log-row">' +
+        '<span class="log-hand">' + entry.hand + '</span>' +
+        '<span class="log-dur">' + fmt(entry.seconds) + '</span>' +
+        '<span class="log-time">' + hh + ':' + mm + ampm + '</span>' +
+      '</div>';
+    }).join('');
+    logList.innerHTML = rows;
+  }
+  renderLog();
+
+  function showToast(text){
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function(){ toastEl.classList.remove('show'); }, 1800);
+  }
+
+  /* ---------------- hand toggle ---------------- */
+  handToggle.addEventListener('click', function(e){
+    var btn = e.target.closest('button[data-hand]');
+    if (!btn || state !== STATE.IDLE) return;
+    currentHand = btn.getAttribute('data-hand');
+    Array.prototype.forEach.call(handToggle.querySelectorAll('button'), function(b){
+      b.classList.toggle('active', b === btn);
+    });
+  });
+
+  /* ---------------- prep config ---------------- */
+  function clampPrep(v){ return Math.min(300, Math.max(3, v)); }
+  function setPrepTotal(v){
+    prepTotal = clampPrep(Math.round(v));
+    prepInput.value = prepTotal;
+    timerDisplay.textContent = fmt(prepTotal);
+    savePrep();
+  }
+  $('prepMinus').addEventListener('click', function(){ setPrepTotal(prepTotal - 5); });
+  $('prepPlus').addEventListener('click', function(){ setPrepTotal(prepTotal + 5); });
+  prepInput.addEventListener('change', function(){
+    var v = parseInt(prepInput.value, 10);
+    if (isNaN(v)) v = prepTotal;
+    setPrepTotal(v);
+  });
+  prepInput.addEventListener('blur', function(){ setPrepTotal(parseInt(prepInput.value,10) || prepTotal); });
+
+  /* ---------------- prep phase ---------------- */
+  function beginPrep(){
+    state = STATE.PREP;
+    stateLabel.textContent = 'Prep';
+    setAccent(getComputedStyle(document.documentElement).getPropertyValue('--amber'));
+    document.body.style.background = '#0d0800';
+    prepConfig.style.display = 'none';
+    renderRunningControls();
+    prepRemaining = prepTotal;
+    timerDisplay.textContent = fmt(prepRemaining);
+    subReadout.textContent = 'get set…';
+
+    clearInterval(prepInterval);
+    prepInterval = setInterval(function(){
+      prepRemaining -= 1;
+      if (prepRemaining <= 0){
+        clearInterval(prepInterval);
+        speak('Hang');
+        beginHang();
+        return;
+      }
+      timerDisplay.textContent = fmt(prepRemaining);
+      if (prepRemaining <= 3) speak(String(prepRemaining));
+    }, 1000);
+  }
+
+  /* ---------------- hang phase ---------------- */
+  function beginHang(){
+    state = STATE.HANG;
+    stateLabel.textContent = 'Hanging — ' + (currentHand === 'both' ? 'both hands' : currentHand + ' hand');
+    setAccent(getComputedStyle(document.documentElement).getPropertyValue('--teal'));
+    document.body.style.background = '#001416';
+    subReadout.textContent = 'stay tight — go until failure';
+    renderRunningControls();
+
+    hangStartTs = Date.now();
+    hangElapsedBase = 0;
+    lastAnnouncedSec = 0;
+    timerDisplay.textContent = '0:00';
+
+    clearInterval(hangInterval);
+    hangInterval = setInterval(hangTick, 100);
+  }
+
+  function currentHangMs(){
+    return hangElapsedBase + (state === STATE.HANG ? (Date.now() - hangStartTs) : 0);
+  }
+
+  function hangTick(){
+    var totalSec = Math.floor(currentHangMs() / 1000);
+    timerDisplay.textContent = fmt(totalSec);
+    if (totalSec > 0 && totalSec % 10 === 0 && totalSec !== lastAnnouncedSec){
+      lastAnnouncedSec = totalSec;
+      speak(secondsToSpeech(totalSec));
+    }
+  }
+
+  /* ---------------- controls: start / pause / reset ---------------- */
+  function onStart(){
+    // synchronous user-gesture actions for iOS unlocking
+    unlockSpeech();
+    requestWakeLock();
+    beginPrep();
+  }
+
+  function onPauseResume(){
+    if (state === STATE.PREP){
+      clearInterval(prepInterval);
+      state = STATE.PAUSED_PREP;
+      stateLabel.textContent = 'Paused';
+      setAccent(getComputedStyle(document.documentElement).getPropertyValue('--grey'));
+      document.body.style.background = '#0a0a0a';
+      renderRunningControls();
+    } else if (state === STATE.HANG){
+      hangElapsedBase = currentHangMs();
+      clearInterval(hangInterval);
+      state = STATE.PAUSED_HANG;
+      stateLabel.textContent = 'Paused';
+      setAccent(getComputedStyle(document.documentElement).getPropertyValue('--grey'));
+      document.body.style.background = '#0a0a0a';
+      renderRunningControls();
+    } else if (state === STATE.PAUSED_PREP){
+      state = STATE.PREP;
+      stateLabel.textContent = 'Prep';
+      setAccent(getComputedStyle(document.documentElement).getPropertyValue('--amber'));
+      document.body.style.background = '#0d0800';
+      renderRunningControls();
+      prepInterval = setInterval(function(){
+        prepRemaining -= 1;
+        if (prepRemaining <= 0){
+          clearInterval(prepInterval);
+          speak('Hang');
+          beginHang();
+          return;
+        }
+        timerDisplay.textContent = fmt(prepRemaining);
+        if (prepRemaining <= 3) speak(String(prepRemaining));
+      }, 1000);
+    } else if (state === STATE.PAUSED_HANG){
+      state = STATE.HANG;
+      stateLabel.textContent = 'Hanging — ' + (currentHand === 'both' ? 'both hands' : currentHand + ' hand');
+      setAccent(getComputedStyle(document.documentElement).getPropertyValue('--teal'));
+      document.body.style.background = '#001416';
+      renderRunningControls();
+      hangStartTs = Date.now();
+      hangInterval = setInterval(hangTick, 100);
+    }
+  }
+
+  function onReset(){
+    clearInterval(prepInterval);
+    clearInterval(hangInterval);
+    try{ window.speechSynthesis && window.speechSynthesis.cancel(); }catch(e){}
+
+    var finishedHangMs = (state === STATE.HANG || state === STATE.PAUSED_HANG) ? currentHangMs() : 0;
+    if (finishedHangMs >= 1000){
+      var seconds = Math.round(finishedHangMs / 1000);
+      log.unshift({ hand: currentHand, seconds: seconds, ts: Date.now() });
+      saveLog();
+      renderLog();
+      showToast('Saved · ' + fmt(seconds) + ' · ' + currentHand);
+    }
+
+    releaseWakeLock();
+    renderIdle();
+  }
+
+  $('clearLog').addEventListener('click', function(){
+    log = [];
+    saveLog();
+    renderLog();
+  });
+
+  /* ---------------- init ---------------- */
+  renderIdle();
+})();
+</script>
+</body>
+</html>
